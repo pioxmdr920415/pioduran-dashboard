@@ -2,6 +2,45 @@
 @tailwind components;
 @tailwind utilities;
 
+/* PhotoSwipe Custom Styles */
+.pswp {
+  --pswp-bg: rgba(0, 0, 0, 0.95);
+  --pswp-icon-color: #ffffff;
+  --pswp-icon-color-secondary: #4a5568;
+  --pswp-error-text-color: #ffffff;
+}
+
+.pswp__button {
+  background-color: rgba(0, 0, 0, 0.5);
+  border-radius: 8px;
+  transition: background-color 0.2s ease;
+}
+
+.pswp__button:hover {
+  background-color: rgba(0, 0, 0, 0.7);
+}
+
+.pswp__counter {
+  background-color: rgba(0, 0, 0, 0.5);
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.pswp__img {
+  object-fit: contain;
+}
+
+/* Gallery hover effect */
+.pswp-gallery a:hover {
+  transform: translateY(-4px);
+}
+
+.pswp-gallery a:active {
+  transform: translateY(-2px);
+}
+
 body {
     margin: 0;
     font-family:
