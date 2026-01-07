@@ -1,19 +1,96 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchSheetData } from '../utils/api';
+import { fetchSheetData, fetchSheetDataDirect, createRecord, updateRecord, deleteRecord } from '../utils/api';
 import { useApp } from '../context/AppContext';
+import { useTheme } from '../context/ThemeContext';
 import Header from './Header';
 import CollaborativeTable from './CollaborativeTable';
+import AddRecordModal from './AddRecordModal.jsx';
+import EditRecordModal from './EditRecordModal.jsx';
+import DeleteConfirmDialog from './DeleteConfirmDialog.jsx';
 
 const CalendarManagement = () => {
   const { showToast, cacheSheetData, getCachedSheetData } = useApp();
+  const { isDarkMode } = useTheme();
   const navigate = useNavigate();
   const [data, setData] = useState([]);
   const [filteredData, setFilteredData] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Modal states
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState(null);
+  const [selectedRowIndex, setSelectedRowIndex] = useState(null);
+  const [deleteRecordName, setDeleteRecordName] = useState('');
+  const [isActionLoading, setIsActionLoading] = useState(false);
 
-  const exportToCSV = () => {
+  const handleCreateRecord = async (recordData) => {
+    setIsActionLoading(true);
+    try {
+      const response = await createRecord('event', recordData);
+      showToast('Event created successfully', 'success');
+      await loadData();
+      setShowAddModal(false);
+    } catch (error) {
+      console.error('Error creating event:', error);
+      showToast(`Failed to create event: ${error.message}`, 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleUpdateRecord = async (recordData, rowIndex) => {
+    setIsActionLoading(true);
+    try {
+      const response = await updateRecord('event', rowIndex + 2, recordData);
+      showToast('Event updated successfully', 'success');
+      await loadData();
+      setShowEditModal(false);
+      setSelectedRecord(null);
+      setSelectedRowIndex(null);
+    } catch (error) {
+      console.error('Error updating event:', error);
+      showToast(`Failed to update event: ${error.message}`, 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleDeleteRecord = async () => {
+    setIsActionLoading(true);
+    try {
+      const response = await deleteRecord('event', selectedRowIndex + 2);
+      showToast('Event deleted successfully', 'success');
+      await loadData();
+      setShowDeleteDialog(false);
+      setSelectedRecord(null);
+      setSelectedRowIndex(null);
+      setDeleteRecordName('');
+    } catch (error) {
+      console.error('Error deleting event:', error);
+      showToast(`Failed to delete event: ${error.message}`, 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const openEditModal = (record, rowIndex) => {
+    setSelectedRecord(record);
+    setSelectedRowIndex(rowIndex);
+    setShowEditModal(true);
+  };
+
+  const openDeleteDialog = (record, rowIndex) => {
+    setSelectedRecord(record);
+    setSelectedRowIndex(rowIndex);
+    setDeleteRecordName(record['Event/Task'] || `Event at row ${rowIndex + 1}`);
+    setShowDeleteDialog(true);
+  };
+
+  const exportToCSV = useCallback(() => {
     if (filteredData.length === 0) {
       showToast('No data to export', 'error');
       return;
@@ -40,12 +117,12 @@ const CalendarManagement = () => {
     link.click();
     document.body.removeChild(link);
     showToast('Data exported successfully', 'success');
-  };
+  }, [showToast]);
 
-  const handlePrint = () => {
+  const handlePrint = useCallback(() => {
     window.print();
     showToast('Print dialog opened', 'info');
-  };
+  }, [showToast]);
 
   useEffect(() => {
     loadData();
@@ -54,11 +131,29 @@ const CalendarManagement = () => {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const result = await fetchSheetData('event');
+      // Try direct Google Sheets API first (bypasses backend)
+      let result;
+      let directSuccess = false;
+      
+      try {
+        console.log('Attempting direct Google Sheets API for events...');
+        result = await fetchSheetDataDirect('event');
+        directSuccess = true;
+        console.log('Direct API succeeded for events');
+      } catch (directError) {
+        console.warn('Direct API failed for events, falling back to backend:', directError.message);
+        // Fall back to backend API
+        result = await fetchSheetData('event');
+      }
+      
       const sheetData = result.data || [];
       setData(sheetData);
       setFilteredData(sheetData);
       await cacheSheetData('event', sheetData);
+      
+      if (directSuccess) {
+        showToast('Events loaded directly from Google Sheets', 'success');
+      }
     } catch (error) {
       const cached = await getCachedSheetData('event');
       if (cached && cached.data) {
@@ -86,10 +181,38 @@ const CalendarManagement = () => {
     }
   }, [searchTerm, data]);
 
+  const columns = [
+    { key: 'Event/Task', label: 'Event/Task', className: 'font-semibold text-gray-900' },
+    { key: 'Date', label: 'Date', className: 'text-gray-600' },
+    { key: 'Time', label: 'Time', className: 'text-gray-600' },
+    { key: 'Location', label: 'Location', className: 'text-gray-600' },
+    {
+      key: 'Status',
+      label: 'Status',
+      render: (value) => (
+        <span
+          className={`px-2 md:px-3 py-1 rounded-full text-xs font-semibold ${
+            value === 'Upcoming'
+              ? 'bg-blue-100 text-blue-700'
+              : value === 'Completed'
+              ? 'bg-green-100 text-green-700'
+              : value === 'In Progress'
+              ? 'bg-yellow-100 text-yellow-700'
+              : value === 'Cancelled'
+              ? 'bg-red-100 text-red-700'
+              : 'bg-gray-100 text-gray-700'
+          }`}
+        >
+          {value || ''}
+        </span>
+      )
+    },
+  ];
+
   return (
-    <div>
+    <div className={isDarkMode ? 'bg-gray-900 min-h-screen' : 'bg-purple-50 min-h-screen'}>
       <Header />
-      <div className="min-h-screen bg-gradient-to-b from-purple-50 to-white p-4 md:p-8">
+      <div className="min-h-screen p-4 md:p-8">
         <div className="max-w-7xl mx-auto">
           <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
             <div className="flex items-center gap-4">
@@ -100,13 +223,25 @@ const CalendarManagement = () => {
                 🔙 Back
               </button>
               <div>
-                <h1 className="text-2xl md:text-3xl font-bold text-gray-900">📅 Calendar Management</h1>
+                <h1 className="text-2xl md:text-3xl font-bold text-gray-900 flex items-center gap-2">
+                  📅 Calendar Management
+                </h1>
                 <p className="text-sm mt-1 text-gray-600">{filteredData.length} events found</p>
               </div>
             </div>
 
-            {/* Export and Print Buttons */}
+            {/* Action Buttons */}
             <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg font-semibold transition-all flex items-center gap-2"
+                data-testid="add-button"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add Event
+              </button>
               <button
                 onClick={exportToCSV}
                 className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-semibold transition-all flex items-center gap-2"
@@ -148,45 +283,63 @@ const CalendarManagement = () => {
           ) : (
             <CollaborativeTable
               data={filteredData}
-              columns={[
-                { key: 'Event/Task', label: 'Event/Task', className: 'font-semibold text-gray-900' },
-                { key: 'Date', label: 'Date', className: 'text-gray-600' },
-                { key: 'Time', label: 'Time', className: 'text-gray-600' },
-                { key: 'Location', label: 'Location', className: 'text-gray-600' },
-                {
-                  key: 'Status',
-                  label: 'Status',
-                  render: (value) => (
-                    <span
-                      className={`px-2 md:px-3 py-1 rounded-full text-xs font-semibold ${
-                        value === 'Upcoming'
-                          ? 'bg-blue-100 text-blue-700'
-                          : value === 'Completed'
-                          ? 'bg-green-100 text-green-700'
-                          : 'bg-yellow-100 text-yellow-700'
-                      }`}
-                    >
-                      {value || ''}
-                    </span>
-                  )
-                },
-              ]}
+              columns={columns}
               sheetType="event"
               enableBulkOperations={true}
+              enableCRUD={true}
+              onEdit={openEditModal}
+              onDelete={openDeleteDialog}
               onDataChange={(newData) => {
-                // Update local data state
                 setData(newData);
                 setFilteredData(newData);
-                // Cache the updated data
                 cacheSheetData('event', newData);
               }}
-              emptyMessage="No events scheduled"
+              emptyMessage="No events scheduled. Click 'Add Event' to create a new record."
             />
           )}
         </div>
       </div>
+
+      {/* Add Record Modal */}
+      <AddRecordModal
+        isOpen={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        sheetType="event"
+        onSubmit={handleCreateRecord}
+        isDarkMode={isDarkMode}
+      />
+
+      {/* Edit Record Modal */}
+      <EditRecordModal
+        isOpen={showEditModal}
+        onClose={() => {
+          setShowEditModal(false);
+          setSelectedRecord(null);
+          setSelectedRowIndex(null);
+        }}
+        sheetType="event"
+        record={selectedRecord}
+        rowIndex={selectedRowIndex}
+        onSubmit={handleUpdateRecord}
+        isDarkMode={isDarkMode}
+      />
+
+      {/* Delete Confirmation Dialog */}
+      <DeleteConfirmDialog
+        isOpen={showDeleteDialog}
+        onClose={() => {
+          setShowDeleteDialog(false);
+          setSelectedRecord(null);
+          setSelectedRowIndex(null);
+          setDeleteRecordName('');
+        }}
+        onConfirm={handleDeleteRecord}
+        record={selectedRecord}
+        recordName={deleteRecordName}
+        isLoading={isActionLoading}
+      />
     </div>
   );
 };
 
-export default CalendarManagement;
+export default memo(CalendarManagement);
