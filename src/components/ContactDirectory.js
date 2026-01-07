@@ -1,11 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchSheetData } from '../utils/api';
+import { fetchSheetData, fetchSheetDataDirect, createRecord, updateRecord, deleteRecord } from '../utils/api';
 import { useApp } from '../context/AppContext';
 import { useTheme } from '../context/ThemeContext';
 import Header from './Header';
 import CollaborativeTable from './CollaborativeTable';
 import { TableSkeleton } from './LoadingSkeleton';
+import AddRecordModal from './AddRecordModal.jsx';
+import EditRecordModal from './EditRecordModal.jsx';
+import DeleteConfirmDialog from './DeleteConfirmDialog.jsx';
 
 const ContactDirectory = () => {
   const { showToast, cacheSheetData, getCachedSheetData } = useApp();
@@ -15,8 +18,80 @@ const ContactDirectory = () => {
   const [filteredData, setFilteredData] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Modal states
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState(null);
+  const [selectedRowIndex, setSelectedRowIndex] = useState(null);
+  const [deleteRecordName, setDeleteRecordName] = useState('');
+  const [isActionLoading, setIsActionLoading] = useState(false);
 
-  const exportToCSV = () => {
+  const handleCreateRecord = async (recordData) => {
+    setIsActionLoading(true);
+    try {
+      const response = await createRecord('contact', recordData);
+      showToast('Contact created successfully', 'success');
+      await loadData();
+      setShowAddModal(false);
+    } catch (error) {
+      console.error('Error creating contact:', error);
+      showToast(`Failed to create contact: ${error.message}`, 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleUpdateRecord = async (recordData, rowIndex) => {
+    setIsActionLoading(true);
+    try {
+      const response = await updateRecord('contact', rowIndex + 2, recordData);
+      showToast('Contact updated successfully', 'success');
+      await loadData();
+      setShowEditModal(false);
+      setSelectedRecord(null);
+      setSelectedRowIndex(null);
+    } catch (error) {
+      console.error('Error updating contact:', error);
+      showToast(`Failed to update contact: ${error.message}`, 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleDeleteRecord = async () => {
+    setIsActionLoading(true);
+    try {
+      const response = await deleteRecord('contact', selectedRowIndex + 2);
+      showToast('Contact deleted successfully', 'success');
+      await loadData();
+      setShowDeleteDialog(false);
+      setSelectedRecord(null);
+      setSelectedRowIndex(null);
+      setDeleteRecordName('');
+    } catch (error) {
+      console.error('Error deleting contact:', error);
+      showToast(`Failed to delete contact: ${error.message}`, 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const openEditModal = (record, rowIndex) => {
+    setSelectedRecord(record);
+    setSelectedRowIndex(rowIndex);
+    setShowEditModal(true);
+  };
+
+  const openDeleteDialog = (record, rowIndex) => {
+    setSelectedRecord(record);
+    setSelectedRowIndex(rowIndex);
+    setDeleteRecordName(record['Name'] || `Contact at row ${rowIndex + 1}`);
+    setShowDeleteDialog(true);
+  };
+
+  const exportToCSV = useCallback(() => {
     if (filteredData.length === 0) {
       showToast('No data to export', 'error');
       return;
@@ -43,12 +118,12 @@ const ContactDirectory = () => {
     link.click();
     document.body.removeChild(link);
     showToast('Data exported successfully', 'success');
-  };
+  }, [showToast]);
 
-  const handlePrint = () => {
+  const handlePrint = useCallback(() => {
     window.print();
     showToast('Print dialog opened', 'info');
-  };
+  }, [showToast]);
 
   useEffect(() => {
     loadData();
@@ -57,11 +132,29 @@ const ContactDirectory = () => {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const result = await fetchSheetData('contact');
+      // Try direct Google Sheets API first (bypasses backend)
+      let result;
+      let directSuccess = false;
+      
+      try {
+        console.log('Attempting direct Google Sheets API for contacts...');
+        result = await fetchSheetDataDirect('contact');
+        directSuccess = true;
+        console.log('Direct API succeeded for contacts');
+      } catch (directError) {
+        console.warn('Direct API failed for contacts, falling back to backend:', directError.message);
+        // Fall back to backend API
+        result = await fetchSheetData('contact');
+      }
+      
       const sheetData = result.data || [];
       setData(sheetData);
       setFilteredData(sheetData);
       await cacheSheetData('contact', sheetData);
+      
+      if (directSuccess) {
+        showToast('Contacts loaded directly from Google Sheets', 'success');
+      }
     } catch (error) {
       const cached = await getCachedSheetData('contact');
       if (cached && cached.data) {
@@ -142,8 +235,22 @@ const ContactDirectory = () => {
               </div>
             </div>
 
-            {/* Export and Print Buttons */}
+            {/* Action Buttons */}
             <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowAddModal(true)}
+                className={`px-4 py-2 rounded-xl font-semibold transition-all flex items-center gap-2 hover:scale-105 ${
+                  isDarkMode
+                    ? 'bg-purple-600 hover:bg-purple-500 text-white'
+                    : 'bg-purple-500 hover:bg-purple-600 text-white'
+                }`}
+                data-testid="add-button"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add Contact
+              </button>
               <button
                 onClick={exportToCSV}
                 className={`px-4 py-2 rounded-xl font-semibold transition-all flex items-center gap-2 hover:scale-105 ${
@@ -217,19 +324,59 @@ const ContactDirectory = () => {
             columns={columns}
             sheetType="contact"
             enableBulkOperations={true}
+            enableCRUD={true}
+            onEdit={openEditModal}
+            onDelete={openDeleteDialog}
             onDataChange={(newData) => {
-              // Update local data state
               setData(newData);
               setFilteredData(newData);
-              // Cache the updated data
               cacheSheetData('contact', newData);
             }}
-            emptyMessage="No contacts found"
+            emptyMessage="No contacts found. Click 'Add Contact' to create a new record."
           />
         )}
       </div>
+
+      {/* Add Record Modal */}
+      <AddRecordModal
+        isOpen={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        sheetType="contact"
+        onSubmit={handleCreateRecord}
+        isDarkMode={isDarkMode}
+      />
+
+      {/* Edit Record Modal */}
+      <EditRecordModal
+        isOpen={showEditModal}
+        onClose={() => {
+          setShowEditModal(false);
+          setSelectedRecord(null);
+          setSelectedRowIndex(null);
+        }}
+        sheetType="contact"
+        record={selectedRecord}
+        rowIndex={selectedRowIndex}
+        onSubmit={handleUpdateRecord}
+        isDarkMode={isDarkMode}
+      />
+
+      {/* Delete Confirmation Dialog */}
+      <DeleteConfirmDialog
+        isOpen={showDeleteDialog}
+        onClose={() => {
+          setShowDeleteDialog(false);
+          setSelectedRecord(null);
+          setSelectedRowIndex(null);
+          setDeleteRecordName('');
+        }}
+        onConfirm={handleDeleteRecord}
+        record={selectedRecord}
+        recordName={deleteRecordName}
+        isLoading={isActionLoading}
+      />
     </div>
   );
 };
 
-export default ContactDirectory;
+export default memo(ContactDirectory);
