@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchSheetData } from '../utils/api';
+import { fetchSheetData, fetchSheetDataDirect, createRecord, updateRecord, deleteRecord } from '../utils/api';
 import { useApp } from '../context/AppContext';
 import { useTheme } from '../context/ThemeContext';
 import useDebounce from '../hooks/useDebounce';
 import Header from './Header';
 import CollaborativeTable from './CollaborativeTable';
 import { TableSkeleton } from './LoadingSkeleton';
+import AddRecordModal from './AddRecordModal';
+import EditRecordModal from './EditRecordModal';
+import DeleteConfirmDialog from './DeleteConfirmDialog';
 
 const SupplyInventory = () => {
   const { isOnline, showToast, cacheSheetData, getCachedSheetData } = useApp();
@@ -16,8 +19,101 @@ const SupplyInventory = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   
+  // Modal states
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState(null);
+  const [selectedRowIndex, setSelectedRowIndex] = useState(null);
+  const [deleteRecordName, setDeleteRecordName] = useState('');
+  const [isActionLoading, setIsActionLoading] = useState(false);
+  
   // Debounce search term to avoid excessive filtering
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
+
+  const handleCreateRecord = async (recordData) => {
+    if (!isOnline) {
+      showToast('You must be online to create records', 'error');
+      return;
+    }
+    
+    setIsActionLoading(true);
+    try {
+      const response = await createRecord('supply', recordData);
+      showToast('Record created successfully', 'success');
+      
+      // Refresh data from server
+      await loadData();
+      setShowAddModal(false);
+    } catch (error) {
+      console.error('Error creating record:', error);
+      showToast(`Failed to create record: ${error.message}`, 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleUpdateRecord = async (recordData, rowIndex) => {
+    if (!isOnline) {
+      showToast('You must be online to update records', 'error');
+      return;
+    }
+    
+    setIsActionLoading(true);
+    try {
+      const response = await updateRecord('supply', rowIndex + 2, recordData); // +2 because row 1 is header
+      showToast('Record updated successfully', 'success');
+      
+      // Refresh data from server
+      await loadData();
+      setShowEditModal(false);
+      setSelectedRecord(null);
+      setSelectedRowIndex(null);
+    } catch (error) {
+      console.error('Error updating record:', error);
+      showToast(`Failed to update record: ${error.message}`, 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleDeleteRecord = async () => {
+    if (!isOnline) {
+      showToast('You must be online to delete records', 'error');
+      return;
+    }
+    
+    setIsActionLoading(true);
+    try {
+      const response = await deleteRecord('supply', selectedRowIndex + 2); // +2 because row 1 is header
+      showToast('Record deleted successfully', 'success');
+      
+      // Refresh data from server
+      await loadData();
+      setShowDeleteDialog(false);
+      setSelectedRecord(null);
+      setSelectedRowIndex(null);
+      setDeleteRecordName('');
+    } catch (error) {
+      console.error('Error deleting record:', error);
+      showToast(`Failed to delete record: ${error.message}`, 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const openEditModal = (record, rowIndex) => {
+    setSelectedRecord(record);
+    setSelectedRowIndex(rowIndex);
+    setShowEditModal(true);
+  };
+
+  const openDeleteDialog = (record, rowIndex) => {
+    setSelectedRecord(record);
+    setSelectedRowIndex(rowIndex);
+    setDeleteRecordName(record['Item Name'] || `Record at row ${rowIndex + 1}`);
+    setShowDeleteDialog(true);
+  };
 
   const exportToCSV = useCallback(() => {
     if (filteredData.length === 0) {
@@ -61,12 +157,30 @@ const SupplyInventory = () => {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const result = await fetchSheetData('supply');
+      // Try direct Google Sheets API first (bypasses backend)
+      let result;
+      let directSuccess = false;
+      
+      try {
+        console.log('Attempting direct Google Sheets API...');
+        result = await fetchSheetDataDirect('supply');
+        directSuccess = true;
+        console.log('Direct API succeeded');
+      } catch (directError) {
+        console.warn('Direct API failed, falling back to backend:', directError.message);
+        // Fall back to backend API
+        result = await fetchSheetData('supply');
+      }
+      
       const sheetData = result.data || [];
       setData(sheetData);
       
       // Cache the data
       await cacheSheetData('supply', sheetData);
+      
+      if (directSuccess) {
+        showToast('Data loaded directly from Google Sheets', 'success');
+      }
     } catch (error) {
       console.error('Error loading supply data:', error);
       
@@ -111,7 +225,11 @@ const SupplyInventory = () => {
           className={`px-3 py-1 rounded-full text-xs font-semibold ${
             value === 'In Stock'
               ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-              : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
+              : value === 'Low Stock'
+              ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
+              : value === 'Out of Stock'
+              ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+              : 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400'
           }`}
         >
           {value || ''}
@@ -165,8 +283,22 @@ const SupplyInventory = () => {
               </div>
             </div>
             
-            {/* Export and Print Buttons */}
+            {/* Action Buttons */}
             <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowAddModal(true)}
+                className={`px-4 py-2 rounded-xl font-semibold transition-all flex items-center gap-2 hover:scale-105 ${
+                  isDarkMode
+                    ? 'bg-purple-600 hover:bg-purple-500 text-white'
+                    : 'bg-purple-500 hover:bg-purple-600 text-white'
+                }`}
+                data-testid="add-button"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add Item
+              </button>
               <button
                 onClick={exportToCSV}
                 className={`px-4 py-2 rounded-xl font-semibold transition-all flex items-center gap-2 hover:scale-105 ${
@@ -240,16 +372,58 @@ const SupplyInventory = () => {
             columns={columns}
             sheetType="supply"
             enableBulkOperations={true}
+            enableCRUD={true}
+            onEdit={openEditModal}
+            onDelete={openDeleteDialog}
             onDataChange={(newData) => {
               // Update local data state
               setData(newData);
               // Cache the updated data
               cacheSheetData('supply', newData);
             }}
-            emptyMessage="No items found"
+            emptyMessage="No items found. Click 'Add Item' to create a new record."
           />
         )}
       </div>
+
+      {/* Add Record Modal */}
+      <AddRecordModal
+        isOpen={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        sheetType="supply"
+        onSubmit={handleCreateRecord}
+        isDarkMode={isDarkMode}
+      />
+
+      {/* Edit Record Modal */}
+      <EditRecordModal
+        isOpen={showEditModal}
+        onClose={() => {
+          setShowEditModal(false);
+          setSelectedRecord(null);
+          setSelectedRowIndex(null);
+        }}
+        sheetType="supply"
+        record={selectedRecord}
+        rowIndex={selectedRowIndex}
+        onSubmit={handleUpdateRecord}
+        isDarkMode={isDarkMode}
+      />
+
+      {/* Delete Confirmation Dialog */}
+      <DeleteConfirmDialog
+        isOpen={showDeleteDialog}
+        onClose={() => {
+          setShowDeleteDialog(false);
+          setSelectedRecord(null);
+          setSelectedRowIndex(null);
+          setDeleteRecordName('');
+        }}
+        onConfirm={handleDeleteRecord}
+        record={selectedRecord}
+        recordName={deleteRecordName}
+        isLoading={isActionLoading}
+      />
     </div>
   );
 };
