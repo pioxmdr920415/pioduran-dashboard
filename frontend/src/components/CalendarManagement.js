@@ -5,9 +5,9 @@ import { useApp } from '../context/AppContext';
 import { useTheme } from '../context/ThemeContext';
 import Header from './Header';
 import CollaborativeTable from './CollaborativeTable';
-import AddRecordModal from './AddRecordModal';
-import EditRecordModal from './EditRecordModal';
-import DeleteConfirmDialog from './DeleteConfirmDialog';
+import AddRecordModal from './AddRecordModal.jsx';
+import EditRecordModal from './EditRecordModal.jsx';
+import DeleteConfirmDialog from './DeleteConfirmDialog.jsx';
 
 const CalendarManagement = () => {
   const { showToast, cacheSheetData, getCachedSheetData } = useApp();
