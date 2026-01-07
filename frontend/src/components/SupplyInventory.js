@@ -7,9 +7,9 @@ import useDebounce from '../hooks/useDebounce';
 import Header from './Header';
 import CollaborativeTable from './CollaborativeTable';
 import { TableSkeleton } from './LoadingSkeleton';
-import AddRecordModal from './AddRecordModal';
-import EditRecordModal from './EditRecordModal';
-import DeleteConfirmDialog from './DeleteConfirmDialog';
+import AddRecordModal from './AddRecordModal.jsx';
+import EditRecordModal from './EditRecordModal.jsx';
+import DeleteConfirmDialog from './DeleteConfirmDialog.jsx';
 
 const SupplyInventory = () => {
   const { isOnline, showToast, cacheSheetData, getCachedSheetData } = useApp();
