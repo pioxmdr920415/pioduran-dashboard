@@ -90,6 +90,7 @@ export const fetchSheetData = async (sheetName) => {
           return await fetchCachedSheetData(sheetName);
         } catch (cacheError) {
           console.error(`Cache fallback also failed for sheet ${sheetName}:`, cacheError);
+          throw new Error(cacheError.message);
         }
       }
 
@@ -126,6 +127,7 @@ export const fetchDriveFolder = async (folderId) => {
           return await fetchCachedDriveFolder(folderId);
         } catch (cacheError) {
           console.error(`Cache fallback also failed for Drive folder ${folderId}:`, cacheError);
+          throw new Error(cacheError.message);
         }
       }
 

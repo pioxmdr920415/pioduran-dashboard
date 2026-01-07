@@ -77,7 +77,8 @@ const webpackConfig = {
               vendor: {
                 test: /[\\/]node_modules[\\/]/,
                 name(module) {
-                  const packageName = module.context.match(/[\\/]node_modules[\\/](.*?)([\\/]|$)/)[1];
+                  const match = module.context.match(/[\\/]node_modules[\\/](.*?)([\\/]|$)/);
+                  const packageName = match ? match[1] : 'unknown';
                   return `vendor.${packageName.replace('@', '')}`;
                 },
                 priority: 10,
