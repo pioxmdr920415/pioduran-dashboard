@@ -6,9 +6,9 @@ import { useTheme } from '../context/ThemeContext';
 import Header from './Header';
 import CollaborativeTable from './CollaborativeTable';
 import { TableSkeleton } from './LoadingSkeleton';
-import AddRecordModal from './AddRecordModal';
-import EditRecordModal from './EditRecordModal';
-import DeleteConfirmDialog from './DeleteConfirmDialog';
+import AddRecordModal from './AddRecordModal.jsx';
+import EditRecordModal from './EditRecordModal.jsx';
+import DeleteConfirmDialog from './DeleteConfirmDialog.jsx';
 
 const ContactDirectory = () => {
   const { showToast, cacheSheetData, getCachedSheetData } = useApp();
