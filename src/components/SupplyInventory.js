@@ -157,20 +157,10 @@ const SupplyInventory = () => {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      // Try direct Google Sheets API first (bypasses backend)
-      let result;
-      let directSuccess = false;
-      
-      try {
-        console.log('Attempting direct Google Sheets API...');
-        result = await fetchSheetDataDirect('supply');
-        directSuccess = true;
-        console.log('Direct API succeeded');
-      } catch (directError) {
-        console.warn('Direct API failed, falling back to backend:', directError.message);
-        // Fall back to backend API
-        result = await fetchSheetData('supply');
-      }
+      // Use direct Google Sheets API connection
+      console.log('Attempting direct Google Sheets API...');
+      const result = await fetchSheetDataDirect('supply');
+      console.log('Direct API succeeded');
       
       const sheetData = result.data || [];
       setData(sheetData);
@@ -178,9 +168,7 @@ const SupplyInventory = () => {
       // Cache the data
       await cacheSheetData('supply', sheetData);
       
-      if (directSuccess) {
-        showToast('Data loaded directly from Google Sheets', 'success');
-      }
+      showToast('Data loaded directly from Google Sheets', 'success');
     } catch (error) {
       console.error('Error loading supply data:', error);
       

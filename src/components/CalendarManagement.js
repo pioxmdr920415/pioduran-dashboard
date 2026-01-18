@@ -131,29 +131,17 @@ const CalendarManagement = () => {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      // Try direct Google Sheets API first (bypasses backend)
-      let result;
-      let directSuccess = false;
-      
-      try {
-        console.log('Attempting direct Google Sheets API for events...');
-        result = await fetchSheetDataDirect('event');
-        directSuccess = true;
-        console.log('Direct API succeeded for events');
-      } catch (directError) {
-        console.warn('Direct API failed for events, falling back to backend:', directError.message);
-        // Fall back to backend API
-        result = await fetchSheetData('event');
-      }
+      // Use direct Google Sheets API connection
+      console.log('Attempting direct Google Sheets API for events...');
+      const result = await fetchSheetDataDirect('event');
+      console.log('Direct API succeeded for events');
       
       const sheetData = result.data || [];
       setData(sheetData);
       setFilteredData(sheetData);
       await cacheSheetData('event', sheetData);
       
-      if (directSuccess) {
-        showToast('Events loaded directly from Google Sheets', 'success');
-      }
+      showToast('Events loaded directly from Google Sheets', 'success');
     } catch (error) {
       const cached = await getCachedSheetData('event');
       if (cached && cached.data) {
