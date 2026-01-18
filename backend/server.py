@@ -33,10 +33,6 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Google API Configuration
-GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY', '')
-GOOGLE_SHEET_ID = os.environ.get('GOOGLE_SHEET_ID', '')
-
 # Request deduplication cache
 ongoing_requests = {}
 
@@ -70,9 +66,7 @@ api_metrics = {
     'requests_success': 0,
     'requests_error': 0,
     'cache_hits': 0,
-    'cache_misses': 0,
-    'google_api_calls': 0,
-    'google_api_errors': 0
+    'cache_misses': 0
 }
 
 # Create the main app without a prefix
@@ -124,24 +118,6 @@ def retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=60.0, backoff_fa
     return decorator
 
 
-def handle_google_api_error(error: Exception, service: str) -> str:
-    """Handle and format Google API errors with user-friendly messages"""
-    if hasattr(error, 'response') and error.response:
-        status_code = error.response.status_code
-        if status_code == 403:
-            return f"Access denied to {service}. Please check API key permissions."
-        elif status_code == 404:
-            return f"Resource not found in {service}."
-        elif status_code == 429:
-            return f"Rate limit exceeded for {service}. Please try again later."
-        elif status_code >= 500:
-            return f"{service} is temporarily unavailable. Please try again later."
-        else:
-            return f"Error accessing {service}: {error.response.text[:200]}"
-    else:
-        return f"Network error accessing {service}: {str(error)}"
-
-
 def deduplicate_requests(func):
     """Decorator to prevent duplicate concurrent requests"""
     @wraps(func)
@@ -181,18 +157,12 @@ def track_metrics(func):
     async def wrapper(*args, **kwargs):
         api_metrics['requests_total'] += 1
 
-        # Check if this is a Google API call
-        if func.__name__ in ['fetch_sheet_data', 'fetch_drive_folder', 'fetch_drive_folder_page']:
-            api_metrics['google_api_calls'] += 1
-
         try:
             result = await func(*args, **kwargs)
             api_metrics['requests_success'] += 1
             return result
         except Exception as e:
             api_metrics['requests_error'] += 1
-            if func.__name__ in ['fetch_sheet_data', 'fetch_drive_folder', 'fetch_drive_folder_page']:
-                api_metrics['google_api_errors'] += 1
             raise
 
     return wrapper
@@ -461,101 +431,8 @@ class BulkImportRequest(BaseModel):
 
 
 # ==================== Google Sheets API ====================
-def get_sheet_url(sheet_name: str) -> str:
-    """Generate Google Sheets API URL"""
-    return f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:json&sheet={sheet_name}"
-
-
-@retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=30.0)
-@deduplicate_requests
-@track_metrics
-async def fetch_sheet_data(sheet_name: str) -> List[Dict[str, Any]]:
-    """Fetch data from Google Sheets with retry logic"""
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(get_sheet_url(sheet_name))
-            response.raise_for_status()
-
-            text = response.text
-            # Remove the JavaScript wrapper
-            json_str = text[47:-2]
-            data = json.loads(json_str)
-
-            if 'table' not in data or 'rows' not in data['table']:
-                logger.warning(f"No data found in sheet '{sheet_name}'")
-                return []
-
-            headers = [col.get('label', '') for col in data['table']['cols']]
-            rows = []
-
-            for row in data['table']['rows']:
-                obj = {}
-                for i, cell in enumerate(row['c']):
-                    obj[headers[i]] = cell['v'] if cell else ''
-                rows.append(obj)
-
-            logger.info(f"Successfully fetched {len(rows)} rows from sheet '{sheet_name}'")
-            return rows
-    except Exception as e:
-        error_msg = handle_google_api_error(e, "Google Sheets")
-        logger.error(f"Error fetching sheet data for '{sheet_name}': {error_msg}")
-        raise HTTPException(status_code=500, detail=error_msg)
-
-
-# ==================== Google Drive API ====================
-@retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=30.0)
-@track_metrics
-async def fetch_drive_folder_page(folder_id: str, page_token: str = None) -> Dict[str, Any]:
-    """Fetch a page of files and folders from Google Drive"""
-    base_url = "https://www.googleapis.com/drive/v3/files"
-    params = {
-        'q': f"'{folder_id}' in parents",
-        'fields': 'nextPageToken,files(id,name,mimeType,thumbnailLink,webViewLink,iconLink,modifiedTime,size)',
-        'key': GOOGLE_API_KEY,
-        'pageSize': 100,  # Maximum allowed
-        'orderBy': 'name'
-    }
-
-    if page_token:
-        params['pageToken'] = page_token
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(base_url, params=params)
-            response.raise_for_status()
-            return response.json()
-    except Exception as e:
-        error_msg = handle_google_api_error(e, "Google Drive")
-        logger.error(f"Error fetching Drive folder page for '{folder_id}': {error_msg}")
-        raise
-
-
-@deduplicate_requests
-@track_metrics
-async def fetch_drive_folder(folder_id: str) -> Dict[str, Any]:
-    """Fetch all files and folders from Google Drive with pagination support"""
-    try:
-        all_files = []
-        page_token = None
-
-        while True:
-            data = await fetch_drive_folder_page(folder_id, page_token)
-            all_files.extend(data.get('files', []))
-            page_token = data.get('nextPageToken')
-
-            if not page_token:
-                break
-
-        folders = [f for f in all_files if f.get('mimeType') == 'application/vnd.google-apps.folder']
-        files = [f for f in all_files if f.get('mimeType') != 'application/vnd.google-apps.folder']
-
-        logger.info(f"Successfully fetched {len(folders)} folders and {len(files)} files from Drive folder '{folder_id}'")
-        return {'folders': folders, 'files': files}
-
-    except Exception as e:
-        error_msg = handle_google_api_error(e, "Google Drive")
-        logger.error(f"Error fetching Drive folder '{folder_id}': {error_msg}")
-        raise HTTPException(status_code=500, detail=error_msg)
+# Google API functions have been moved to frontend (frontend/src/utils/googleAPI.js)
+# This allows direct frontend-to-Google API calls, reducing backend load
 
 
 # ==================== Caching Functions ====================
@@ -637,160 +514,22 @@ async def health_check():
     }
 
 
-# ==================== Google Sheets Routes ====================
-
-@api_router.get("/sheets/{sheet_name}")
-async def get_sheet_data(sheet_name: str):
-    """Get data from Google Sheets with caching"""
-    try:
-        # Try to fetch fresh data
-        data = await fetch_sheet_data(sheet_name)
-
-        # Cache the data
-        await cache_resource('sheet', sheet_name, data)
-
-        return {
-            'success': True,
-            'data': data,
-            'cached': False,
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        }
-    except Exception as e:
-        # If fetch fails, try to return cached data
-        logger.warning(f"Failed to fetch sheet data, trying cache: {e}")
-        cached = await get_cached_resource('sheet', sheet_name)
-
-        if cached:
-            api_metrics['cache_hits'] += 1
-            return {
-                'success': True,
-                'data': cached.get('data', []),
-                'cached': True,
-                'cached_at': cached.get('cached_at'),
-                'timestamp': datetime.now(timezone.utc).isoformat()
-            }
-
-        api_metrics['cache_misses'] += 1
-        raise HTTPException(status_code=500, detail="Failed to fetch data and no cache available")
+# Note: Google Sheets and Drive APIs are now called directly from frontend
 
 
-@api_router.get("/cache/sheets/{sheet_name}")
-async def get_cached_sheet_data(sheet_name: str):
-    """Get cached sheet data for offline access"""
-    cached = await get_cached_resource('sheet', sheet_name)
-    
-    if not cached:
-        raise HTTPException(status_code=404, detail="No cached data available")
-    
-    return {
-        'success': True,
-        'data': cached.get('data', []),
-        'cached_at': cached.get('cached_at'),
-        'timestamp': datetime.now(timezone.utc).isoformat()
-    }
-
-
-# ==================== Google Drive Routes ====================
-
-@api_router.get("/drive/folder/{folder_id}")
-async def get_drive_folder(folder_id: str):
-    """Get Google Drive folder contents with caching"""
-    try:
-        # Try to fetch fresh data
-        data = await fetch_drive_folder(folder_id)
-
-        # Cache the data
-        await cache_resource('drive_folder', folder_id, data)
-
-        return {
-            'success': True,
-            'data': data,
-            'cached': False,
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        }
-    except Exception as e:
-        # If fetch fails, try to return cached data
-        logger.warning(f"Failed to fetch Drive folder, trying cache: {e}")
-        cached = await get_cached_resource('drive_folder', folder_id)
-
-        if cached:
-            api_metrics['cache_hits'] += 1
-            return {
-                'success': True,
-                'data': cached.get('data', {'folders': [], 'files': []}),
-                'cached': True,
-                'cached_at': cached.get('cached_at'),
-                'timestamp': datetime.now(timezone.utc).isoformat()
-            }
-
-        api_metrics['cache_misses'] += 1
-        raise HTTPException(status_code=500, detail="Failed to fetch data and no cache available")
-
-
-@api_router.get("/cache/drive/folder/{folder_id}")
-async def get_cached_drive_folder(folder_id: str):
-    """Get cached Drive folder data for offline access"""
-    cached = await get_cached_resource('drive_folder', folder_id)
-    
-    if not cached:
-        raise HTTPException(status_code=404, detail="No cached data available")
-    
-    return {
-        'success': True,
-        'data': cached.get('data', {'folders': [], 'files': []}),
-        'cached_at': cached.get('cached_at'),
-        'timestamp': datetime.now(timezone.utc).isoformat()
-    }
+# Note: Google Drive routes are now called directly from frontend
 
 
 # ==================== Sync Routes ====================
 
 @api_router.post("/sync/all")
 async def sync_all_data():
-    """Sync all data from Google Sheets and Drive"""
-    try:
-        results = {
-            'sheets': {},
-            'drive_folders': {}
-        }
-        
-        # Sync all sheets
-        sheet_names = ['supply', 'event', 'contact']
-        for sheet_name in sheet_names:
-            try:
-                data = await fetch_sheet_data(sheet_name)
-                await cache_resource('sheet', sheet_name, data)
-                results['sheets'][sheet_name] = 'success'
-            except Exception as e:
-                results['sheets'][sheet_name] = f'failed: {str(e)}'
-        
-        # Sync critical Drive folders
-        drive_folders = {
-            'documents': '15_xiFeXu_vdIe2CYrjGaRCAho2OqhGvo',
-            'photos': '1O1WlCjMvZ5lVcrOIGNMlBY4ZuQ-zEarg',
-            'panorama': '1tsbcsTEfg5RLHLJLYXR41avy9SrajsqM',
-            'administrative': '1Wh2wSQuyzHiz25Vbr4ICETj18RRUEpvi',
-            'topographic': '1Y01dJR_YJdixvsi_B9Xs7nQaXD31_Yn2',
-            'hazards': '16xy_oUAr6sWb3JE9eNrxYJdAMDRKGYLn',
-            'denr': '1yQmtrKfKiMOFA933W0emzeGoexMpUDGM',
-            'other': '1MI1aO_-gQwsRbSJsfHY2FI4AOz9Jney1'
-        }
-        
-        for folder_name, folder_id in drive_folders.items():
-            try:
-                data = await fetch_drive_folder(folder_id)
-                await cache_resource('drive_folder', folder_id, data)
-                results['drive_folders'][folder_name] = 'success'
-            except Exception as e:
-                results['drive_folders'][folder_name] = f'failed: {str(e)}'
-        
-        return {
-            'success': True,
-            'results': results,
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+    """Sync endpoint - note that Google Sheets and Drive syncing is now handled by frontend directly"""
+    return {
+        'success': True,
+        'message': 'Sync coordination endpoint - data syncing is now handled by frontend',
+        'timestamp': datetime.now(timezone.utc).isoformat()
+    }
 
 
 @api_router.get("/cache/status")

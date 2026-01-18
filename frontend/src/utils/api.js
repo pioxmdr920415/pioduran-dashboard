@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { fetchSheetDataDirect, fetchDriveFolderDirect } from './googleAPI';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API_BASE = `${BACKEND_URL}/api`;
@@ -78,36 +79,40 @@ export const fetchSheetData = async (sheetName) => {
 
   return deduplicateRequest(requestKey, async () => {
     try {
-      const response = await apiClient.get(`/sheets/${sheetName}`);
-      return response.data;
+      // Use direct Google API call
+      const data = await fetchSheetDataDirect(sheetName);
+      return {
+        success: true,
+        data: data,
+        cached: false,
+        timestamp: new Date().toISOString()
+      };
     } catch (error) {
-      const errorInfo = handleApiError(error, `Google Sheets (${sheetName})`);
-
-      // Try cached data if online fetch fails and we're online
-      if (isOnline() && errorInfo.status !== 404) {
-        console.log(`Attempting to fetch cached data for sheet ${sheetName}`);
-        try {
-          return await fetchCachedSheetData(sheetName);
-        } catch (cacheError) {
-          console.error(`Cache fallback also failed for sheet ${sheetName}:`, cacheError);
-          throw new Error(cacheError.message);
-        }
-      }
-
-      throw new Error(errorInfo.message);
+      console.error(`Failed to fetch sheet data: ${error.message}`);
+      throw error;
     }
   });
 };
 
 export const fetchCachedSheetData = async (sheetName) => {
+  // Since we're now calling Google Sheets directly, use the same function
+  // and let the local cache handle it
   try {
-    const response = await apiClient.get(`/cache/sheets/${sheetName}`);
-    return response.data;
+    const data = await fetchSheetDataDirect(sheetName);
+    return {
+      success: true,
+      data: data,
+      cached_at: new Date().toISOString(),
+      timestamp: new Date().toISOString()
+    };
   } catch (error) {
-    const errorInfo = handleApiError(error, `Cached Google Sheets (${sheetName})`);
-    throw new Error(errorInfo.message);
+    console.error(`Cached sheet fetch also failed for ${sheetName}:`, error);
+    throw error;
   }
 };
+
+// Export fetchSheetDataDirect for direct use
+export { fetchSheetDataDirect };
 
 // Google Drive API
 export const fetchDriveFolder = async (folderId) => {
@@ -115,34 +120,35 @@ export const fetchDriveFolder = async (folderId) => {
 
   return deduplicateRequest(requestKey, async () => {
     try {
-      const response = await apiClient.get(`/drive/folder/${folderId}`);
-      return response.data;
+      // Use direct Google API call
+      const data = await fetchDriveFolderDirect(folderId);
+      return {
+        success: true,
+        data: data,
+        cached: false,
+        timestamp: new Date().toISOString()
+      };
     } catch (error) {
-      const errorInfo = handleApiError(error, `Google Drive (${folderId})`);
-
-      // Try cached data if online fetch fails and we're online
-      if (isOnline() && errorInfo.status !== 404) {
-        console.log(`Attempting to fetch cached data for Drive folder ${folderId}`);
-        try {
-          return await fetchCachedDriveFolder(folderId);
-        } catch (cacheError) {
-          console.error(`Cache fallback also failed for Drive folder ${folderId}:`, cacheError);
-          throw new Error(cacheError.message);
-        }
-      }
-
-      throw new Error(errorInfo.message);
+      console.error(`Failed to fetch Drive folder: ${error.message}`);
+      throw error;
     }
   });
 };
 
 export const fetchCachedDriveFolder = async (folderId) => {
+  // Since we're now calling Google Drive directly, use the same function
+  // and let the local cache handle it
   try {
-    const response = await apiClient.get(`/cache/drive/folder/${folderId}`);
-    return response.data;
+    const data = await fetchDriveFolderDirect(folderId);
+    return {
+      success: true,
+      data: data,
+      cached_at: new Date().toISOString(),
+      timestamp: new Date().toISOString()
+    };
   } catch (error) {
-    const errorInfo = handleApiError(error, `Cached Google Drive (${folderId})`);
-    throw new Error(errorInfo.message);
+    console.error(`Cached Drive folder fetch also failed for ${folderId}:`, error);
+    throw error;
   }
 };
 
@@ -260,6 +266,43 @@ export const downloadBlob = (blob, filename) => {
   link.click();
   document.body.removeChild(link);
   window.URL.revokeObjectURL(url);
+};
+
+// CRUD Operations API
+export const createRecord = async (sheetType, data, description = null) => {
+  try {
+    const response = await apiClient.post(`/sheets/${sheetType}`, {
+      data,
+      description
+    });
+    return response.data;
+  } catch (error) {
+    const errorInfo = handleApiError(error, `Create Record (${sheetType})`);
+    throw new Error(errorInfo.message);
+  }
+};
+
+export const updateRecord = async (sheetType, rowIndex, data, description = null) => {
+  try {
+    const response = await apiClient.put(`/sheets/${sheetType}/${rowIndex}`, {
+      data,
+      description
+    });
+    return response.data;
+  } catch (error) {
+    const errorInfo = handleApiError(error, `Update Record (${sheetType})`);
+    throw new Error(errorInfo.message);
+  }
+};
+
+export const deleteRecord = async (sheetType, rowIndex) => {
+  try {
+    const response = await apiClient.delete(`/sheets/${sheetType}/${rowIndex}`);
+    return response.data;
+  } catch (error) {
+    const errorInfo = handleApiError(error, `Delete Record (${sheetType})`);
+    throw new Error(errorInfo.message);
+  }
 };
 
 export default apiClient;

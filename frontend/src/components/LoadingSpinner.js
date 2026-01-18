@@ -25,8 +25,8 @@ const LoadingSpinner = ({ fullScreen = false, size = 'medium' }) => {
       </div>
     );
   }
-
   return spinner;
 };
 
+export { LoadingSpinner };
 export default LoadingSpinner;

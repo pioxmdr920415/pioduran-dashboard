@@ -38,3 +38,4 @@ const Toast = ({ message, type = 'info', onClose }) => {
 };
 
 export default Toast;
+export { Toast };
